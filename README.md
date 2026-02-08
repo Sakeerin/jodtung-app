@@ -1,59 +1,95 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 📊 JodTung (จดตังค์) - LINE Expense Bot
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+**JodTung** is a seamless expense tracking application that integrates with LINE Messenger. It allows users to record income and expenses directly through LINE chat using natural language or shortcuts, while providing a comprehensive web dashboard for visualization and management.
 
-## About Laravel
+## 🚀 Key Features
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **LINE Chat Interface**: Record transactions easily (e.g., "Food 150", "Salary 50000").
+- **Rich Menu Integration**: Quick access to summary, stats, and manual recording.
+- **Web Dashboard**: Visual charts, transaction history, and category management.
+- **Group Expense Tracking**: Track shared expenses in LINE groups.
+- **Smart Shortcuts**: Emoji-based shortcuts for quick categorization.
+- **Auto Login**: Seamless login from LINE to Web Dashboard.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## 🛠 Tech Stack
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- **Framework**: [Laravel 11](https://laravel.com)
+- **Database**: MySQL 8
+- **Frontend**: Vue.js 3 + Tailwind CSS (Planned for Phase 5)
+- **API**: LINE Messaging API (Reply Mode)
+- **Authentication**: Laravel Sanctum
 
-## Learning Laravel
+## 📂 Project Structure
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+- `app/Http/Controllers/Line/WebhookController.php`: Handles LINE Webhook events.
+- `app/Services/Line/`: LINE API services and message parsing (Phase 2).
+- `app/Models/`: 
+    - `User`: Application users linked to LINE accounts.
+    - `Transaction`: Income and expense records.
+    - `Category`: Transaction categories (income/expense).
+    - `LineConnection`: Manages linking between LINE and Web accounts.
+- `database/migrations/`: Database schema definitions.
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## ⚙️ Installation & Setup
 
-## Laravel Sponsors
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Sakeerin/jodtung-app.git
+   cd jodtung-app
+   ```
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+2. **Install dependencies**
+   ```bash
+   composer install
+   npm install
+   ```
 
-### Premium Partners
+3. **Environment Configuration**
+   Copy `.env.example` to `.env` and configure your database and LINE API credentials:
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
+   
+   **Required .env variables:**
+   ```env
+   DB_CONNECTION=mysql
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_DATABASE=jodtung
+   DB_USERNAME=root
+   DB_PASSWORD=
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+   LINE_CHANNEL_ACCESS_TOKEN=your_token
+   LINE_CHANNEL_SECRET=your_secret
+   ```
 
-## Contributing
+4. **Run Migrations**
+   ```bash
+   php artisan migrate --seed
+   ```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+5. **Serve the Application**
+   ```bash
+   php artisan serve
+   ```
 
-## Code of Conduct
+## 🧪 Testing
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Run the automated test suite:
+```bash
+php artisan test
+```
 
-## Security Vulnerabilities
+## 📅 Development Roadmap
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- [x] **Phase 1: Foundation** - Project setup, Database, Auth, Webhook
+- [ ] **Phase 2: LINE Bot Core** - Message Parsing, Flex Messages, Rich Menu
+- [ ] **Phase 3: Transaction System** - CRUD Transactions, Shortcuts
+- [ ] **Phase 4: Group Support** - Group tracking, Member roles
+- [ ] **Phase 5: Web Dashboard** - Vue.js frontend, Charts
+- [ ] **Phase 6: Polish & Deploy** - Refinement, Deployment
 
-## License
+## 📄 License
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+This project is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
