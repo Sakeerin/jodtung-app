@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\LineConnectionController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\LineAutoLoginController;
@@ -31,6 +32,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [LoginController::class, 'logout']);
     Route::get('/auth/user', [LoginController::class, 'user']);
 
+    // LINE Connection
+    Route::get('/line/connection', [LineConnectionController::class, 'status']);
+    Route::post('/line/generate-code', [LineConnectionController::class, 'generateCode']);
+    Route::delete('/line/disconnect', [LineConnectionController::class, 'disconnect']);
+
     // TODO: Add in Phase 3
     // Route::apiResource('/transactions', TransactionController::class);
     // Route::apiResource('/categories', CategoryController::class);
@@ -40,9 +46,4 @@ Route::middleware('auth:sanctum')->group(function () {
     // Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
     // Route::get('/dashboard/chart', [DashboardController::class, 'chart']);
     // Route::get('/dashboard/recent', [DashboardController::class, 'recent']);
-
-    // LINE Connection
-    // Route::get('/line/connection', [LineConnectionController::class, 'status']);
-    // Route::post('/line/generate-code', [LineConnectionController::class, 'generateCode']);
-    // Route::delete('/line/disconnect', [LineConnectionController::class, 'disconnect']);
 });
