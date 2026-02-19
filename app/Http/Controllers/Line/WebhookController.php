@@ -8,6 +8,8 @@ use App\Models\Group;
 use App\Models\Shortcut;
 use App\Models\User;
 use App\Services\ConnectionService;
+use App\Services\GroupService;
+use App\Services\TransactionService;
 use App\Services\Line\FlexMessageBuilder;
 use App\Services\Line\LineService;
 use App\Services\Line\MessageParser;
@@ -35,6 +37,8 @@ class WebhookController extends Controller
         private MessageParser $messageParser,
         private FlexMessageBuilder $flexBuilder,
         private ConnectionService $connectionService,
+        private GroupService $groupService,
+        private TransactionService $transactionService,
     ) {}
 
     /**
@@ -95,16 +99,18 @@ class WebhookController extends Controller
         $text = trim($message->getText());
         $replyToken = $event->getReplyToken();
         $source = $event->getSource();
-        
-        // Get user ID based on source type
+
         $lineUserId = null;
-        $lineGroupId = null;
-        $isGroup = false;
+        $group = null;
 
         if ($source instanceof GroupSource) {
             $lineUserId = $source->getUserId();
             $lineGroupId = $source->getGroupId();
-            $isGroup = true;
+
+            if ($lineGroupId) {
+                $groupSummary = $this->lineService->getGroupSummary($lineGroupId);
+                $group = $this->groupService->ensureActiveGroup($lineGroupId, $groupSummary['groupName'] ?? null);
+            }
         } elseif ($source instanceof UserSource) {
             $lineUserId = $source->getUserId();
         }
@@ -114,8 +120,12 @@ class WebhookController extends Controller
             return;
         }
 
-        // Find or create user
+        // Resolve sender account
         $user = $this->connectionService->findUserByLineId($lineUserId);
+        if ($group) {
+            $profile = $this->lineService->getGroupMemberProfile($group->line_group_id, $lineUserId);
+            $user = $this->groupService->resolveGroupMember($group, $lineUserId, $profile);
+        }
 
         // Parse the message
         $parsed = $this->messageParser->parse($text, $user);
@@ -123,8 +133,8 @@ class WebhookController extends Controller
         // Handle based on parsed type
         match (true) {
             $parsed->isConnectionCode() => $this->handleConnectionCode($parsed, $lineUserId, $replyToken),
-            $parsed->isCommand() => $this->handleCommand($parsed, $user, $lineUserId, $replyToken, $lineGroupId),
-            $parsed->isTransaction() => $this->handleTransaction($parsed, $user, $replyToken, $lineGroupId),
+            $parsed->isCommand() => $this->handleCommand($parsed, $user, $lineUserId, $replyToken, $group),
+            $parsed->isTransaction() => $this->handleTransaction($parsed, $user, $replyToken, $group),
             default => $this->handleUnknownMessage($parsed, $user, $replyToken),
         };
     }
@@ -156,7 +166,7 @@ class WebhookController extends Controller
         ?User $user,
         string $lineUserId,
         string $replyToken,
-        ?string $lineGroupId = null
+        ?Group $group = null
     ): void {
         match ($parsed->command) {
             'help' => $this->handleHelpCommand($replyToken),
@@ -164,13 +174,14 @@ class WebhookController extends Controller
             'shortcuts' => $this->handleShortcutsCommand($user, $replyToken),
             'categories' => $this->handleCategoriesCommand($user, $replyToken),
             'summary_today', 'summary_week', 'summary_month', 'summary_all' => 
-                $this->handleSummaryCommand($parsed->command, $user, $replyToken, $lineGroupId),
-            'stats' => $this->handleStatsCommand($user, $replyToken, $lineGroupId),
-            'cancel' => $this->handleCancelCommand($user, $replyToken, $lineGroupId),
-            'recent' => $this->handleRecentCommand($user, $replyToken, $lineGroupId),
+                $this->handleSummaryCommand($parsed->command, $user, $replyToken, $group),
+            'stats' => $this->handleStatsCommand($user, $replyToken, $group),
+            'cancel' => $this->handleCancelCommand($user, $replyToken, $group),
+            'recent' => $this->handleRecentCommand($user, $replyToken, $group),
             'record' => $this->handleRecordCommand($replyToken),
-            'rename_group' => $this->handleRenameGroupCommand($parsed->commandArgument, $lineGroupId, $replyToken),
-            'delete_group' => $this->handleDeleteGroupCommand($lineGroupId, $replyToken),
+            'clear' => $this->handleClearCommand($user, $replyToken, $group),
+            'rename_group' => $this->handleRenameGroupCommand($parsed->commandArgument, $group, $replyToken),
+            'delete_group' => $this->handleDeleteGroupCommand($group, $replyToken),
             default => $this->handleUnknownCommand($parsed->rawMessage, $replyToken),
         };
     }
@@ -219,13 +230,6 @@ class WebhookController extends Controller
             return;
         }
 
-        $shortcuts = Shortcut::where('user_id', $user->id)
-            ->with('category')
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->toArray();
-
-        // Convert to objects for the flexBuilder
         $shortcutObjects = Shortcut::where('user_id', $user->id)
             ->with('category')
             ->orderBy('created_at', 'desc')
@@ -275,9 +279,9 @@ class WebhookController extends Controller
         string $command,
         ?User $user,
         string $replyToken,
-        ?string $lineGroupId = null
+        ?Group $group = null
     ): void {
-        if (!$user && !$lineGroupId) {
+        if (!$user && !$group) {
             $this->lineService->replyText(
                 $replyToken,
                 "❌ กรุณาเชื่อมต่อบัญชีก่อนใช้งาน\n\nพิมพ์ /help เพื่อดูวิธีเชื่อมต่อ"
@@ -285,33 +289,24 @@ class WebhookController extends Controller
             return;
         }
 
-        // This will be fully implemented in Phase 3
-        // For now, return a placeholder response
-        $periodLabel = match ($command) {
-            'summary_today' => 'วันนี้',
-            'summary_week' => 'สัปดาห์นี้',
-            'summary_month' => 'เดือนนี้',
-            'summary_all' => 'ทั้งหมด',
-            default => 'เดือนนี้',
-        };
+        $summary = $this->transactionService->getSummary($user, $command, $group?->id);
 
-        // Placeholder data - will be replaced with actual calculation in Phase 3
         $flexContents = $this->flexBuilder->summaryCard(
-            totalIncome: 0,
-            totalExpense: 0,
-            periodLabel: $periodLabel,
-            periodDetail: null
+            totalIncome: $summary['totalIncome'],
+            totalExpense: $summary['totalExpense'],
+            periodLabel: $summary['periodLabel'],
+            periodDetail: $summary['periodDetail']
         );
         
-        $this->lineService->replyFlex($replyToken, "สรุปยอด{$periodLabel}", $flexContents);
+        $this->lineService->replyFlex($replyToken, "สรุปยอด{$summary['periodLabel']}", $flexContents);
     }
 
     /**
      * Handle /สถิติ command.
      */
-    private function handleStatsCommand(?User $user, string $replyToken, ?string $lineGroupId = null): void
+    private function handleStatsCommand(?User $user, string $replyToken, ?Group $group = null): void
     {
-        if (!$user && !$lineGroupId) {
+        if (!$user && !$group) {
             $this->lineService->replyText(
                 $replyToken,
                 "❌ กรุณาเชื่อมต่อบัญชีก่อนใช้งาน\n\nพิมพ์ /help เพื่อดูวิธีเชื่อมต่อ"
@@ -319,25 +314,25 @@ class WebhookController extends Controller
             return;
         }
 
-        // This will be fully implemented in Phase 3
-        // For now, return a placeholder response
+        $stats = $this->transactionService->getStatsByCategory($user, 'summary_month', $group?->id);
+
         $flexContents = $this->flexBuilder->statsCard(
-            incomeByCategory: [],
-            expenseByCategory: [],
-            totalIncome: 0,
-            totalExpense: 0,
-            periodLabel: 'เดือนนี้'
+            incomeByCategory: $stats['incomeByCategory'],
+            expenseByCategory: $stats['expenseByCategory'],
+            totalIncome: $stats['totalIncome'],
+            totalExpense: $stats['totalExpense'],
+            periodLabel: $stats['periodLabel']
         );
         
-        $this->lineService->replyFlex($replyToken, 'สถิติเดือนนี้', $flexContents);
+        $this->lineService->replyFlex($replyToken, "สถิติ{$stats['periodLabel']}", $flexContents);
     }
 
     /**
      * Handle /ยกเลิก command.
      */
-    private function handleCancelCommand(?User $user, string $replyToken, ?string $lineGroupId = null): void
+    private function handleCancelCommand(?User $user, string $replyToken, ?Group $group = null): void
     {
-        if (!$user && !$lineGroupId) {
+        if (!$user && !$group) {
             $this->lineService->replyText(
                 $replyToken,
                 "❌ กรุณาเชื่อมต่อบัญชีก่อนใช้งาน"
@@ -345,16 +340,22 @@ class WebhookController extends Controller
             return;
         }
 
-        // This will be fully implemented in Phase 3
-        $this->lineService->replyText($replyToken, "ไม่มีรายการที่จะยกเลิก");
+        $deleted = $this->transactionService->cancelLast($user, $group?->id);
+
+        if ($deleted) {
+            $flexContents = $this->flexBuilder->cancelSuccessCard($deleted);
+            $this->lineService->replyFlex($replyToken, 'ยกเลิกรายการสำเร็จ', $flexContents);
+        } else {
+            $this->lineService->replyText($replyToken, "ไม่มีรายการที่จะยกเลิก");
+        }
     }
 
     /**
      * Handle /รายการล่าสุด command.
      */
-    private function handleRecentCommand(?User $user, string $replyToken, ?string $lineGroupId = null): void
+    private function handleRecentCommand(?User $user, string $replyToken, ?Group $group = null): void
     {
-        if (!$user && !$lineGroupId) {
+        if (!$user && !$group) {
             $this->lineService->replyText(
                 $replyToken,
                 "❌ กรุณาเชื่อมต่อบัญชีก่อนใช้งาน"
@@ -362,8 +363,9 @@ class WebhookController extends Controller
             return;
         }
 
-        // This will be fully implemented in Phase 3
-        $flexContents = $this->flexBuilder->transactionListCard([], 'รายการล่าสุด');
+        $transactions = $this->transactionService->getRecent($user, $group?->id);
+
+        $flexContents = $this->flexBuilder->transactionListCard($transactions->all(), 'รายการล่าสุด');
         $this->lineService->replyFlex($replyToken, 'รายการล่าสุด', $flexContents);
     }
 
@@ -384,11 +386,36 @@ class WebhookController extends Controller
     }
 
     /**
+     * Handle /เคลียร์ยอด command.
+     */
+    private function handleClearCommand(?User $user, string $replyToken, ?Group $group = null): void
+    {
+        if (!$user && !$group) {
+            $this->lineService->replyText(
+                $replyToken,
+                "❌ กรุณาเชื่อมต่อบัญชีก่อนใช้งาน"
+            );
+            return;
+        }
+
+        $count = $this->transactionService->clearPeriod($user, 'summary_month', $group?->id);
+
+        if ($count > 0) {
+            $this->lineService->replyText(
+                $replyToken,
+                "🗑️ เคลียร์ยอดเดือนนี้สำเร็จ\n\nลบรายการทั้งหมด {$count} รายการ"
+            );
+        } else {
+            $this->lineService->replyText($replyToken, "ไม่มีรายการในเดือนนี้ที่จะเคลียร์");
+        }
+    }
+
+    /**
      * Handle /ชื่อกลุ่ม command.
      */
-    private function handleRenameGroupCommand(?string $newName, ?string $lineGroupId, string $replyToken): void
+    private function handleRenameGroupCommand(?string $newName, ?Group $group, string $replyToken): void
     {
-        if (!$lineGroupId) {
+        if (!$group) {
             $this->lineService->replyText($replyToken, "❌ คำสั่งนี้ใช้ได้เฉพาะในกลุ่ม");
             return;
         }
@@ -398,16 +425,7 @@ class WebhookController extends Controller
             return;
         }
 
-        $group = Group::where('line_group_id', $lineGroupId)->first();
-        if (!$group) {
-            $group = Group::create([
-                'line_group_id' => $lineGroupId,
-                'name' => trim($newName),
-                'is_active' => true,
-            ]);
-        } else {
-            $group->update(['name' => trim($newName)]);
-        }
+        $group = $this->groupService->renameGroup($group->line_group_id, trim($newName));
 
         $this->lineService->replyText($replyToken, "✅ เปลี่ยนชื่อกลุ่มเป็น \"{$group->name}\" แล้ว");
     }
@@ -415,14 +433,14 @@ class WebhookController extends Controller
     /**
      * Handle /ลบกลุ่ม command.
      */
-    private function handleDeleteGroupCommand(?string $lineGroupId, string $replyToken): void
+    private function handleDeleteGroupCommand(?Group $group, string $replyToken): void
     {
-        if (!$lineGroupId) {
+        if (!$group) {
             $this->lineService->replyText($replyToken, "❌ คำสั่งนี้ใช้ได้เฉพาะในกลุ่ม");
             return;
         }
 
-        Group::where('line_group_id', $lineGroupId)->update(['is_active' => false]);
+        $this->groupService->deactivateGroup($group->line_group_id);
 
         $this->lineService->replyText(
             $replyToken,
@@ -443,15 +461,14 @@ class WebhookController extends Controller
 
     /**
      * Handle transaction message.
-     * This will be fully implemented in Phase 3.
      */
     private function handleTransaction(
         ParsedMessage $parsed,
         ?User $user,
         string $replyToken,
-        ?string $lineGroupId = null
+        ?Group $group = null
     ): void {
-        if (!$user && !$lineGroupId) {
+        if (!$user && !$group) {
             $this->lineService->replyText(
                 $replyToken,
                 "❌ กรุณาเชื่อมต่อบัญชีก่อนบันทึกรายการ\n\n" .
@@ -460,19 +477,49 @@ class WebhookController extends Controller
             return;
         }
 
-        // Phase 3 will implement actual transaction creation
-        // For now, show a preview of what will be recorded
-        $typeLabel = $parsed->isIncome() ? 'รายรับ' : 'รายจ่าย';
-        $categoryName = $parsed->category?->name ?? 'ไม่ระบุ';
-        $categoryEmoji = $parsed->category?->emoji ?? '';
-        
-        $message = "🔜 จะบันทึก{$typeLabel}\n\n" .
-            "{$categoryEmoji} {$categoryName}\n" .
-            "฿" . number_format($parsed->amount, 0) . "\n" .
-            ($parsed->note ? "หมายเหตุ: {$parsed->note}\n\n" : "\n") .
-            "(ระบบบันทึกจะเปิดใช้งานในเฟส 3)";
+        if (!$user) {
+            $this->lineService->replyText($replyToken, '❌ ไม่สามารถระบุผู้ส่งข้อความได้ กรุณาลองใหม่อีกครั้ง');
+            return;
+        }
 
-        $this->lineService->replyText($replyToken, $message);
+        try {
+            $result = $this->transactionService->createFromLine(
+                user: $user,
+                type: $parsed->transactionType,
+                amount: $parsed->amount,
+                categoryId: $parsed->category?->id,
+                note: $parsed->note,
+                groupId: $group?->id,
+            );
+
+            $transaction = $result['transaction'];
+            $todayBalance = $result['todayBalance'];
+            $accountName = $group?->name ?? 'ส่วนตัว';
+
+            if ($parsed->isIncome()) {
+                $flexContents = $this->flexBuilder->incomeRecordCard($transaction, $todayBalance, $accountName);
+                $this->lineService->replyFlex($replyToken, 'บันทึกรายรับสำเร็จ', $flexContents);
+            } else {
+                $flexContents = $this->flexBuilder->expenseRecordCard($transaction, $todayBalance, $accountName);
+                $this->lineService->replyFlex($replyToken, 'บันทึกรายจ่ายสำเร็จ', $flexContents);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to create transaction', [
+                'error' => $e->getMessage(),
+                'user_id' => $user?->id,
+                'parsed' => [
+                    'amount' => $parsed->amount,
+                    'type' => $parsed->transactionType?->value,
+                    'category' => $parsed->category?->name,
+                ],
+            ]);
+
+            $flexContents = $this->flexBuilder->errorCard(
+                'ไม่สามารถบันทึกรายการได้',
+                'กรุณาลองใหม่อีกครั้ง หรือพิมพ์ /help เพื่อดูวิธีใช้งาน'
+            );
+            $this->lineService->replyFlex($replyToken, 'เกิดข้อผิดพลาด', $flexContents);
+        }
     }
 
     /**
@@ -574,11 +621,7 @@ class WebhookController extends Controller
             $groupName = $groupSummary['groupName'];
         }
 
-        // Create or update group record
-        Group::updateOrCreate(
-            ['line_group_id' => $lineGroupId],
-            ['name' => $groupName ?? 'กลุ่ม', 'is_active' => true]
-        );
+        $this->groupService->ensureActiveGroup($lineGroupId, $groupName);
 
         $flexContents = $this->flexBuilder->groupWelcomeCard($groupName);
         $this->lineService->replyFlex($replyToken, 'สวัสดีครับ!', $flexContents);
@@ -597,8 +640,7 @@ class WebhookController extends Controller
         }
 
         if ($lineGroupId) {
-            // Mark group as inactive
-            Group::where('line_group_id', $lineGroupId)->update(['is_active' => false]);
+            $this->groupService->deactivateGroup($lineGroupId);
             Log::info('Bot left group', ['line_group_id' => $lineGroupId]);
         }
     }
