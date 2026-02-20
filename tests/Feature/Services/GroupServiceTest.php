@@ -11,6 +11,37 @@ class GroupServiceTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_resolve_message_group_returns_null_for_deactivated_group(): void
+    {
+        $service = app(GroupService::class);
+
+        Group::create([
+            'line_group_id' => 'C33333333333333333333333333333333',
+            'name' => 'Dorm',
+            'is_active' => false,
+        ]);
+
+        $group = $service->resolveMessageGroup('C33333333333333333333333333333333', 'Dorm v2');
+
+        $this->assertNull($group);
+        $this->assertDatabaseHas('groups', [
+            'line_group_id' => 'C33333333333333333333333333333333',
+            'name' => 'Dorm',
+            'is_active' => false,
+        ]);
+    }
+
+    public function test_resolve_message_group_creates_group_when_not_found(): void
+    {
+        $service = app(GroupService::class);
+
+        $group = $service->resolveMessageGroup('C44444444444444444444444444444444', 'Road Trip');
+
+        $this->assertNotNull($group);
+        $this->assertTrue($group->is_active);
+        $this->assertSame('Road Trip', $group->name);
+    }
+
     public function test_it_tracks_group_members_and_assigns_default_roles(): void
     {
         $service = app(GroupService::class);

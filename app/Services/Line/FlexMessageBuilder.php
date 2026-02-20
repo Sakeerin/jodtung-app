@@ -923,6 +923,8 @@ class FlexMessageBuilder
                             $this->buildHelpCommandRow('/ยกเลิก', 'ลบรายการล่าสุด'),
                             $this->buildHelpCommandRow('/คำสั่ง', 'ดูคำสั่งลัดทั้งหมด'),
                             $this->buildHelpCommandRow('/หมวดหมู่', 'ดูหมวดหมู่ทั้งหมด'),
+                            $this->buildHelpCommandRow('/ชื่อกลุ่ม [ชื่อ]', 'ตั้งชื่อกลุ่ม (ในกลุ่ม)'),
+                            $this->buildHelpCommandRow('/ลบกลุ่ม', 'ยกเลิกกลุ่มและให้บอทออก'),
                         ],
                     ],
                     // Connect section

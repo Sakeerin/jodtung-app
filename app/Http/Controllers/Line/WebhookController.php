@@ -109,7 +109,16 @@ class WebhookController extends Controller
 
             if ($lineGroupId) {
                 $groupSummary = $this->lineService->getGroupSummary($lineGroupId);
-                $group = $this->groupService->ensureActiveGroup($lineGroupId, $groupSummary['groupName'] ?? null);
+                $group = $this->groupService->resolveMessageGroup($lineGroupId, $groupSummary['groupName'] ?? null);
+
+                if (!$group) {
+                    $this->lineService->replyText(
+                        $replyToken,
+                        "ℹ️ กลุ่มนี้ถูกยกเลิกการเชื่อมต่อแล้ว\n\n" .
+                        'หากต้องการใช้งานอีกครั้ง ให้เชิญบอทออกและเพิ่มเข้ากลุ่มใหม่'
+                    );
+                    return;
+                }
             }
         } elseif ($source instanceof UserSource) {
             $lineUserId = $source->getUserId();
@@ -444,8 +453,10 @@ class WebhookController extends Controller
 
         $this->lineService->replyText(
             $replyToken,
-            "✅ ยกเลิกการเชื่อมต่อกลุ่มแล้ว\n\nข้อมูลรายการจะยังคงอยู่ในระบบ"
+            "✅ ยกเลิกการเชื่อมต่อกลุ่มแล้ว\n\nข้อมูลรายการจะยังคงอยู่ในระบบ และบอทจะออกจากกลุ่มนี้"
         );
+
+        $this->lineService->leaveGroup($group->line_group_id);
     }
 
     /**

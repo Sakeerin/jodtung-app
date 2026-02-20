@@ -11,6 +11,32 @@ use Illuminate\Support\Str;
 class GroupService
 {
     /**
+     * Resolve group context for message handling.
+     *
+     * - Creates a new active group when first seen.
+     * - Updates name when available for active groups.
+     * - Returns null when group is explicitly deactivated.
+     */
+    public function resolveMessageGroup(string $lineGroupId, ?string $name = null): ?Group
+    {
+        $group = Group::where('line_group_id', $lineGroupId)->first();
+
+        if (!$group) {
+            return $this->ensureActiveGroup($lineGroupId, $name);
+        }
+
+        if (!$group->is_active) {
+            return null;
+        }
+
+        if ($name && trim($name) !== '' && $group->name !== trim($name)) {
+            $group->update(['name' => trim($name)]);
+        }
+
+        return $group;
+    }
+
+    /**
      * Create or reactivate a LINE group record.
      */
     public function ensureActiveGroup(string $lineGroupId, ?string $name = null): Group
