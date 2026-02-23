@@ -4,8 +4,152 @@
 @source '../../storage/framework/views/*.php';
 @source '../**/*.blade.php';
 @source '../**/*.js';
+@source '../**/*.vue';
 
 @theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-sans: 'Prompt', 'Sarabun', ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+    --color-ink: #1f2f2b;
+    --color-moss: #2e7d63;
+    --color-leaf: #3c9b71;
+    --color-leaf-soft: #d8f1e5;
+    --color-paper: #f4f8ef;
+    --color-card: #fcfff8;
+    --color-danger: #db5252;
+    --color-income: #17a24a;
+    --color-expense: #d9534f;
+}
+
+body {
+    color: var(--color-ink);
+    background: radial-gradient(circle at top left, #d6f4dd 0%, #eef6e8 45%, #f7f2e6 100%);
+    min-height: 100vh;
+}
+
+#app {
+    min-height: 100vh;
+}
+
+.jt-shell {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 1rem 1rem 6rem;
+}
+
+.jt-card {
+    background: var(--color-card);
+    border: 1px solid #d9e8d7;
+    border-radius: 1rem;
+    box-shadow: 0 10px 25px -18px rgba(23, 61, 45, 0.55);
+}
+
+.jt-button {
+    border-radius: 0.75rem;
+    border: 1px solid transparent;
+    padding: 0.6rem 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.jt-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.jt-button-primary {
+    background: linear-gradient(120deg, var(--color-moss), var(--color-leaf));
+    color: #fff;
+}
+
+.jt-button-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 16px -10px rgba(33, 120, 87, 0.8);
+}
+
+.jt-button-outline {
+    border-color: #bad6c8;
+    color: var(--color-moss);
+    background: #f9fef9;
+}
+
+.jt-input,
+.jt-select,
+.jt-textarea {
+    width: 100%;
+    border: 1px solid #bfd8c8;
+    border-radius: 0.7rem;
+    padding: 0.62rem 0.75rem;
+    background: #fff;
+}
+
+.jt-input:focus,
+.jt-select:focus,
+.jt-textarea:focus {
+    outline: 2px solid #a4d2be;
+    outline-offset: 0;
+}
+
+.jt-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+@media (min-width: 768px) {
+    .jt-shell {
+        padding: 1.25rem 1.25rem 2rem;
+    }
+}
+
+.jt-toast {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-radius: 0.8rem;
+    border: 1px solid transparent;
+    padding: 0.7rem 0.8rem;
+    box-shadow: 0 12px 24px -18px rgba(18, 31, 27, 0.75);
+    backdrop-filter: blur(4px);
+}
+
+.jt-toast-success {
+    border-color: #9ed3b6;
+    background: rgba(234, 250, 241, 0.95);
+    color: #176144;
+}
+
+.jt-toast-error {
+    border-color: #e8b5b3;
+    background: rgba(255, 241, 241, 0.96);
+    color: #9f2d2d;
+}
+
+.jt-toast-info {
+    border-color: #c9d8ef;
+    background: rgba(244, 248, 255, 0.96);
+    color: #295184;
+}
+
+.jt-toast-close {
+    line-height: 1;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    width: 1.4rem;
+    height: 1.4rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+    transition: all 0.22s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
 }

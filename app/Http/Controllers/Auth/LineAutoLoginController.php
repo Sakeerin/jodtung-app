@@ -86,6 +86,6 @@ class LineAutoLoginController extends Controller
     public static function generateUrl(int $userId): string
     {
         $token = self::generateToken($userId);
-        return config('app.url') . '/api/auth/line-auto-login?token=' . $token;
+        return config('app.url') . '/auto-login?token=' . $token;
     }
 }
