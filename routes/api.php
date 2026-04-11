@@ -22,9 +22,18 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+// Health check
+Route::get('/health', function () {
+    return response()->json([
+        'status' => 'ok',
+        'timestamp' => now()->toIso8601String(),
+        'app' => config('app.name'),
+    ]);
+});
+
 // LINE Webhook (no auth, uses LINE signature verification)
 Route::post('/line/webhook', [WebhookController::class, 'handle'])
-    ->middleware('verify.line.signature');
+    ->middleware(['verify.line.signature', 'throttle:30,1']);
 
 // Public Auth Routes
 Route::post('/auth/register', [RegisterController::class, 'register']);

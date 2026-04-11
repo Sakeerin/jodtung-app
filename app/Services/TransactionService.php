@@ -19,6 +19,17 @@ class TransactionService
      */
     public function create(User $user, array $data): array
     {
+        // Validate amount bounds
+        $amount = (float) ($data['amount'] ?? 0);
+        if ($amount < 0.01 || $amount > 999999999.99) {
+            throw new \InvalidArgumentException('จำนวนเงินต้องอยู่ระหว่าง 0.01 - 999,999,999.99');
+        }
+
+        // Truncate note if too long
+        if (isset($data['note']) && mb_strlen($data['note']) > 255) {
+            $data['note'] = mb_substr($data['note'], 0, 255);
+        }
+
         $transaction = Transaction::create([
             'user_id' => $user->id,
             'group_id' => $data['group_id'] ?? null,
@@ -78,6 +89,7 @@ class TransactionService
 
         $transaction = $query->with('category')
             ->orderBy('created_at', 'desc')
+            ->orderBy('id', 'desc')
             ->first();
 
         if ($transaction) {
@@ -131,12 +143,12 @@ class TransactionService
 
         $dateRange = $this->getDateRange($period);
         if ($dateRange) {
-            $query->whereBetween('transaction_date', [$dateRange['start'], $dateRange['end']]);
+            $query->whereBetween('transactions.transaction_date', [$dateRange['start'], $dateRange['end']]);
         }
 
         // Get income by category
         $incomeByCategory = (clone $query)
-            ->where('type', TransactionType::INCOME)
+            ->where('transactions.type', TransactionType::INCOME)
             ->join('categories', 'transactions.category_id', '=', 'categories.id')
             ->select(
                 'categories.name',
@@ -155,7 +167,7 @@ class TransactionService
 
         // Get expense by category
         $expenseByCategory = (clone $query)
-            ->where('type', TransactionType::EXPENSE)
+            ->where('transactions.type', TransactionType::EXPENSE)
             ->join('categories', 'transactions.category_id', '=', 'categories.id')
             ->select(
                 'categories.name',
@@ -362,14 +374,14 @@ class TransactionService
     private function buildScopedQuery(?User $user, ?int $groupId = null): Builder
     {
         if ($groupId !== null) {
-            return Transaction::where('group_id', $groupId);
+            return Transaction::where('transactions.group_id', $groupId);
         }
 
         if (!$user) {
             throw new \InvalidArgumentException('User is required when querying personal transactions.');
         }
 
-        return Transaction::where('user_id', $user->id)
-            ->whereNull('group_id');
+        return Transaction::where('transactions.user_id', $user->id)
+            ->whereNull('transactions.group_id');
     }
 }

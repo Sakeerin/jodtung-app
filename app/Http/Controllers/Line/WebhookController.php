@@ -75,14 +75,22 @@ class WebhookController extends Controller
      */
     private function handleEvent($event): void
     {
-        match (true) {
-            $event instanceof MessageEvent => $this->handleMessageEvent($event),
-            $event instanceof FollowEvent => $this->handleFollowEvent($event),
-            $event instanceof UnfollowEvent => $this->handleUnfollowEvent($event),
-            $event instanceof JoinEvent => $this->handleJoinEvent($event),
-            $event instanceof LeaveEvent => $this->handleLeaveEvent($event),
-            default => Log::info('Unhandled event type', ['type' => get_class($event)]),
-        };
+        try {
+            match (true) {
+                $event instanceof MessageEvent => $this->handleMessageEvent($event),
+                $event instanceof FollowEvent => $this->handleFollowEvent($event),
+                $event instanceof UnfollowEvent => $this->handleUnfollowEvent($event),
+                $event instanceof JoinEvent => $this->handleJoinEvent($event),
+                $event instanceof LeaveEvent => $this->handleLeaveEvent($event),
+                default => Log::info('Unhandled event type', ['type' => get_class($event)]),
+            };
+        } catch (\Throwable $e) {
+            Log::error('Failed to handle LINE event', [
+                'event_type' => get_class($event),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
     }
 
     /**

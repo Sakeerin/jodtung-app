@@ -1,0 +1,55 @@
+services:
+  # Application (PHP-FPM + Nginx)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jodtung-app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+    env_file:
+      - .env
+    volumes:
+      - app-storage:/var/www/html/storage
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - jodtung
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: jodtung-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE:-jodtung}
+      MYSQL_USER: ${DB_USERNAME:-jodtung}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jodtung
+
+volumes:
+  app-storage:
+  mysql-data:
+
+
+networks:
+  jodtung:
+    driver: bridge
