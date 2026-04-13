@@ -46,8 +46,21 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Authenticated API routes: 60 requests/minute per user or IP
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Auth endpoints: strict 10 requests/minute per IP to prevent brute-force
+        RateLimiter::for('auth', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip());
+        });
+
+        // LINE webhook: no IP-based throttle — LINE uses shared egress IPs.
+        // The VerifyLineSignature middleware already rejects forged requests,
+        // so additional rate limiting here would only hurt legitimate traffic.
+        RateLimiter::for('line-webhook', function (Request $request) {
+            return Limit::none();
         });
     }
 }

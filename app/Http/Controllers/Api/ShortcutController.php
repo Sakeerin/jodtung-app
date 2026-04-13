@@ -5,11 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreShortcutRequest;
 use App\Models\Shortcut;
+use App\Services\Line\MessageParser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class ShortcutController extends Controller
 {
+    public function __construct(
+        private MessageParser $messageParser,
+    ) {}
+
     /**
      * List all shortcuts for the user.
      */
@@ -45,17 +50,20 @@ class ShortcutController extends Controller
         }
 
         $shortcut = Shortcut::create([
-            'user_id' => $user->id,
-            'keyword' => $data['keyword'],
-            'emoji' => $data['emoji'] ?? null,
+            'user_id'     => $user->id,
+            'keyword'     => $data['keyword'],
+            'emoji'       => $data['emoji'] ?? null,
             'category_id' => $data['category_id'],
-            'type' => $data['type'],
+            'type'        => $data['type'],
         ]);
 
         $shortcut->load('category');
 
+        // Invalidate shortcuts cache so LINE bot picks up the new shortcut immediately
+        $this->messageParser->invalidateShortcutsCache($user->id);
+
         return response()->json([
-            'message' => 'สร้างคำสั่งลัดสำเร็จ',
+            'message'  => 'สร้างคำสั่งลัดสำเร็จ',
             'shortcut' => $shortcut,
         ], 201);
     }
@@ -100,8 +108,11 @@ class ShortcutController extends Controller
         $shortcut->update($data);
         $shortcut->load('category');
 
+        // Invalidate cache after update
+        $this->messageParser->invalidateShortcutsCache($request->user()->id);
+
         return response()->json([
-            'message' => 'แก้ไขคำสั่งลัดสำเร็จ',
+            'message'  => 'แก้ไขคำสั่งลัดสำเร็จ',
             'shortcut' => $shortcut,
         ]);
     }
@@ -116,6 +127,9 @@ class ShortcutController extends Controller
         }
 
         $shortcut->delete();
+
+        // Invalidate cache after delete
+        $this->messageParser->invalidateShortcutsCache($request->user()->id);
 
         return response()->json([
             'message' => 'ลบคำสั่งลัดสำเร็จ',

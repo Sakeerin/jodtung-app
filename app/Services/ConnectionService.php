@@ -96,11 +96,12 @@ class ConnectionService
         // Connect the accounts
         try {
             DB::transaction(function () use ($connection, $lineUserId) {
-                // Update connection record
+                // Update connection record and clear the code so it cannot be reused
                 $connection->update([
-                    'line_user_id' => $lineUserId,
-                    'is_connected' => true,
-                    'connected_at' => now(),
+                    'line_user_id'    => $lineUserId,
+                    'is_connected'    => true,
+                    'connected_at'    => now(),
+                    'connection_code' => null,
                 ]);
 
                 // Update user's LINE user ID

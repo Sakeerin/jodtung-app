@@ -21,10 +21,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'verify.line.signature' => \App\Http\Middleware\VerifyLineSignature::class,
         ]);
-
-        $middleware->api(prepend: [
-            \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
-        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Return JSON for all API requests

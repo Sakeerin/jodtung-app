@@ -2,26 +2,32 @@
 
 namespace App\Services\Line;
 
-use App\Enums\TransactionType;
 use App\Models\Category;
 use App\Models\Shortcut;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
 
 class MessageParser
 {
     /**
      * Parse result types.
      */
-    public const TYPE_COMMAND = 'command';
+    public const TYPE_COMMAND         = 'command';
     public const TYPE_CONNECTION_CODE = 'connection_code';
-    public const TYPE_TRANSACTION = 'transaction';
-    public const TYPE_UNKNOWN = 'unknown';
+    public const TYPE_TRANSACTION     = 'transaction';
+    public const TYPE_UNKNOWN         = 'unknown';
+
+    /**
+     * How long to cache a user's shortcuts (seconds).
+     */
+    private const SHORTCUT_CACHE_TTL = 60;
 
     /**
      * Parse a message from the user.
      *
-     * @param string $message The raw message text
-     * @param User|null $user The user who sent the message (null for unconnected users)
+     * @param string   $message The raw message text
+     * @param User|null $user   The user who sent the message (null for unconnected users)
      * @return ParsedMessage
      */
     public function parse(string $message, ?User $user = null): ParsedMessage
@@ -62,28 +68,29 @@ class MessageParser
     private function parseCommand(string $message): ParsedMessage
     {
         // Extract command and arguments
-        $parts = preg_split('/\s+/', $message, 2);
-        $command = strtolower($parts[0]);
+        $parts    = preg_split('/\s+/', $message, 2);
+        $command  = strtolower($parts[0]);
         $argument = $parts[1] ?? null;
 
         // Map Thai commands to standard commands
         $commandMap = [
-            '/help' => 'help',
-            '/ช่วยเหลือ' => 'help',
-            '/ยอดวันนี้' => 'summary_today',
-            '/ยอดสัปดาห์' => 'summary_week',
-            '/ยอดเดือนนี้' => 'summary_month',
-            '/ยอดรวม' => 'summary_all',
-            '/สถิติ' => 'stats',
-            '/ยกเลิก' => 'cancel',
-            '/คำสั่ง' => 'shortcuts',
-            '/หมวดหมู่' => 'categories',
-            '/สถานะ' => 'status',
-            '/รายการล่าสุด' => 'recent',
-            '/เคลียร์ยอด' => 'clear',
-            '/ลบกลุ่ม' => 'delete_group',
-            '/ชื่อกลุ่ม' => 'rename_group',
-            '/บันทึก' => 'record',
+            '/help'           => 'help',
+            '/ช่วยเหลือ'      => 'help',
+            '/ยอดวันนี้'      => 'summary_today',
+            '/ยอดสัปดาห์'     => 'summary_week',
+            '/ยอดเดือนนี้'    => 'summary_month',
+            '/ยอดรวม'         => 'summary_all',
+            '/สถิติ'          => 'stats',
+            '/ยกเลิก'         => 'cancel',
+            '/คำสั่ง'         => 'shortcuts',
+            '/หมวดหมู่'       => 'categories',
+            '/สถานะ'          => 'status',
+            '/รายการล่าสุด'   => 'recent',
+            '/เคลียร์ยอด'     => 'clear',
+            '/ยืนยัน'         => 'confirm',
+            '/ลบกลุ่ม'        => 'delete_group',
+            '/ชื่อกลุ่ม'      => 'rename_group',
+            '/บันทึก'         => 'record',
         ];
 
         $normalizedCommand = $commandMap[$command] ?? 'unknown';
@@ -103,30 +110,31 @@ class MessageParser
      * Examples:
      *   "เงินเดือน 5000"
      *   "เงินเดือน 5000 เดือนมกราคม"
-     *   "Kie 2000 ทดสอบ"
-     *   "รับ 1000"
+     *   "อาหาร 150 ข้าวมันไก่"
      */
     private function parseTransaction(string $message, User $user): ?ParsedMessage
     {
-        // Try to extract amount from the message
         // Pattern: keyword amount [note]
         // Amount can be integer or decimal, with optional commas
         if (!preg_match('/^(.+?)\s+([\d,]+(?:\.\d{1,2})?)\s*(.*)$/u', $message, $matches)) {
             return null;
         }
 
-        $keyword = trim($matches[1]);
+        $keyword   = trim($matches[1]);
         $amountStr = str_replace(',', '', $matches[2]);
-        $amount = (float) $amountStr;
-        $note = trim($matches[3]) ?: null;
+        $amount    = (float) $amountStr;
+        $note      = trim($matches[3]) ?: null;
 
         // Validate amount
         if ($amount <= 0) {
             return null;
         }
 
+        // Load all shortcuts once from cache — avoids N+1 per message
+        $shortcuts = $this->getCachedShortcuts($user);
+
         // Try to match keyword with user's shortcuts
-        $shortcut = $this->findShortcut($keyword, $user);
+        $shortcut = $this->matchShortcut($keyword, $shortcuts);
 
         if ($shortcut) {
             return new ParsedMessage(
@@ -167,49 +175,52 @@ class MessageParser
     }
 
     /**
-     * Find a matching shortcut for the keyword.
+     * Load all shortcuts for a user from cache (1 DB query per user per TTL window).
      */
-    private function findShortcut(string $keyword, User $user): ?Shortcut
+    private function getCachedShortcuts(User $user): Collection
     {
-        // Normalize keyword for comparison
-        $normalizedKeyword = mb_strtolower(trim($keyword));
-
-        // First, try exact match with keyword
-        $shortcut = Shortcut::where('user_id', $user->id)
-            ->where(function ($query) use ($keyword, $normalizedKeyword) {
-                $query->whereRaw('LOWER(keyword) = ?', [$normalizedKeyword])
-                    ->orWhere('emoji', $keyword);
-            })
-            ->with('category')
-            ->first();
-
-        if ($shortcut) {
-            return $shortcut;
-        }
-
-        // Try to match emoji at the start of keyword
-        // e.g., "รับ" matches emoji "รับ" in shortcut
-        return Shortcut::where('user_id', $user->id)
-            ->where(function ($query) use ($keyword) {
-                // Check if the keyword starts with the emoji
-                $query->whereRaw('? LIKE CONCAT(emoji, "%")', [$keyword])
-                    ->orWhereRaw('? LIKE CONCAT(keyword, "%")', [$keyword]);
-            })
-            ->with('category')
-            ->first();
+        return Cache::remember(
+            "shortcuts:user:{$user->id}",
+            self::SHORTCUT_CACHE_TTL,
+            fn () => Shortcut::where('user_id', $user->id)->with('category')->get()
+        );
     }
 
     /**
-     * Find a matching default category.
+     * Find a matching shortcut from an already-loaded collection.
+     * All filtering done in PHP — no extra DB queries.
+     */
+    private function matchShortcut(string $keyword, Collection $shortcuts): ?Shortcut
+    {
+        $normalizedKeyword = mb_strtolower(trim($keyword));
+
+        // 1. Exact keyword match (case-insensitive) or exact emoji match
+        $match = $shortcuts->first(function (Shortcut $s) use ($keyword, $normalizedKeyword) {
+            return mb_strtolower($s->keyword) === $normalizedKeyword
+                || $s->emoji === $keyword;
+        });
+
+        if ($match) {
+            return $match;
+        }
+
+        // 2. Prefix match — keyword or emoji is a prefix of the input
+        return $shortcuts->first(function (Shortcut $s) use ($keyword) {
+            return str_starts_with($keyword, $s->emoji ?? '')
+                || str_starts_with($keyword, $s->keyword ?? '');
+        });
+    }
+
+    /**
+     * Find a matching default category (single query, result is naturally small).
      */
     private function findDefaultCategory(string $keyword): ?Category
     {
         $normalizedKeyword = mb_strtolower(trim($keyword));
 
-        // Try to match with default category names or emojis
         return Category::where('is_default', true)
             ->where(function ($query) use ($keyword, $normalizedKeyword) {
-                $query->whereRaw('LOWER(name) = ?', [$normalizedKeyword])
+                $query->where('name', $normalizedKeyword)
                     ->orWhere('emoji', $keyword);
             })
             ->first();
@@ -221,7 +232,6 @@ class MessageParser
      */
     public function looksLikeTransaction(string $message): bool
     {
-        // Check if the message contains a number that could be an amount
         return (bool) preg_match('/\d+(?:\.\d{1,2})?/', $message);
     }
 
@@ -231,79 +241,19 @@ class MessageParser
     public function extractAmount(string $message): ?float
     {
         if (preg_match('/([\d,]+(?:\.\d{1,2})?)/', $message, $matches)) {
-            $amountStr = str_replace(',', '', $matches[1]);
-            $amount = (float) $amountStr;
+            $amount = (float) str_replace(',', '', $matches[1]);
             return $amount > 0 ? $amount : null;
         }
 
         return null;
     }
-}
-
-/**
- * Data class for parsed message results.
- */
-class ParsedMessage
-{
-    public function __construct(
-        public readonly string $type,
-        public readonly ?string $command = null,
-        public readonly ?string $commandArgument = null,
-        public readonly ?string $connectionCode = null,
-        public readonly ?string $keyword = null,
-        public readonly ?float $amount = null,
-        public readonly ?string $note = null,
-        public readonly ?TransactionType $transactionType = null,
-        public readonly ?Category $category = null,
-        public readonly ?Shortcut $shortcut = null,
-        public readonly ?string $rawMessage = null,
-    ) {}
 
     /**
-     * Check if this is a command message.
+     * Invalidate the shortcuts cache for a user.
+     * Call this whenever shortcuts are created, updated, or deleted.
      */
-    public function isCommand(): bool
+    public function invalidateShortcutsCache(int $userId): void
     {
-        return $this->type === MessageParser::TYPE_COMMAND;
-    }
-
-    /**
-     * Check if this is a connection code.
-     */
-    public function isConnectionCode(): bool
-    {
-        return $this->type === MessageParser::TYPE_CONNECTION_CODE;
-    }
-
-    /**
-     * Check if this is a valid transaction.
-     */
-    public function isTransaction(): bool
-    {
-        return $this->type === MessageParser::TYPE_TRANSACTION;
-    }
-
-    /**
-     * Check if this is an unknown message type.
-     */
-    public function isUnknown(): bool
-    {
-        return $this->type === MessageParser::TYPE_UNKNOWN;
-    }
-
-    /**
-     * Check if this is an income transaction.
-     */
-    public function isIncome(): bool
-    {
-        return $this->isTransaction() && $this->transactionType === TransactionType::INCOME;
-    }
-
-    /**
-     * Check if this is an expense transaction.
-     */
-    public function isExpense(): bool
-    {
-        return $this->isTransaction() && $this->transactionType === TransactionType::EXPENSE;
+        Cache::forget("shortcuts:user:{$userId}");
     }
 }

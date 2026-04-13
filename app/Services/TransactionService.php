@@ -12,11 +12,6 @@ use Illuminate\Support\Facades\DB;
 
 class TransactionService
 {
-    /**
-     * Create a new transaction.
-     *
-     * @return array{transaction: Transaction, todayBalance: float}
-     */
     public function create(User $user, array $data): array
     {
         // Validate amount bounds
@@ -30,26 +25,28 @@ class TransactionService
             $data['note'] = mb_substr($data['note'], 0, 255);
         }
 
-        $transaction = Transaction::create([
-            'user_id' => $user->id,
-            'group_id' => $data['group_id'] ?? null,
-            'category_id' => $data['category_id'],
-            'type' => $data['type'],
-            'amount' => $data['amount'],
-            'note' => $data['note'] ?? null,
-            'source' => $data['source'] ?? 'web',
-            'line_message_id' => $data['line_message_id'] ?? null,
-            'transaction_date' => $data['transaction_date'] ?? today(),
-        ]);
+        return DB::transaction(function () use ($user, $data) {
+            $transaction = Transaction::create([
+                'user_id' => $user->id,
+                'group_id' => $data['group_id'] ?? null,
+                'category_id' => $data['category_id'],
+                'type' => $data['type'],
+                'amount' => $data['amount'],
+                'note' => $data['note'] ?? null,
+                'source' => $data['source'] ?? 'web',
+                'line_message_id' => $data['line_message_id'] ?? null,
+                'transaction_date' => $data['transaction_date'] ?? today(),
+            ]);
 
-        $transaction->load('category');
+            $transaction->load('category');
 
-        $todayBalance = $this->getTodayBalance($user, $data['group_id'] ?? null);
+            $todayBalance = $this->getTodayBalance($user, $data['group_id'] ?? null);
 
-        return [
-            'transaction' => $transaction,
-            'todayBalance' => $todayBalance,
-        ];
+            return [
+                'transaction' => $transaction,
+                'todayBalance' => $todayBalance,
+            ];
+        });
     }
 
     /**
@@ -78,46 +75,42 @@ class TransactionService
         ]);
     }
 
-    /**
-     * Cancel (delete) the last transaction for a user.
-     *
-     * @return Transaction|null The deleted transaction, or null if none found
-     */
     public function cancelLast(?User $user, ?int $groupId = null): ?Transaction
     {
-        $query = $this->buildScopedQuery($user, $groupId);
+        return DB::transaction(function () use ($user, $groupId) {
+            $query = $this->buildScopedQuery($user, $groupId);
 
-        $transaction = $query->with('category')
-            ->orderBy('created_at', 'desc')
-            ->orderBy('id', 'desc')
-            ->first();
+            $transaction = $query->with('category')
+                ->lockForUpdate()
+                ->orderBy('created_at', 'desc')
+                ->orderBy('id', 'desc')
+                ->first();
 
-        if ($transaction) {
-            $deleted = clone $transaction;
-            $transaction->delete();
-            return $deleted;
-        }
+            if ($transaction) {
+                $deleted = clone $transaction;
+                $transaction->delete();
+                return $deleted;
+            }
 
-        return null;
+            return null;
+        });
     }
 
-    /**
-     * Get summary (total income, total expense) for a period.
-     *
-     * @return array{totalIncome: float, totalExpense: float, balance: float, periodLabel: string, periodDetail: ?string}
-     */
     public function getSummary(?User $user, string $period, ?int $groupId = null): array
     {
         $query = $this->buildScopedQuery($user, $groupId);
 
         $dateRange = $this->getDateRange($period);
         if ($dateRange) {
-            $query->whereBetween('transaction_date', [$dateRange['start'], $dateRange['end']]);
+            $query->whereBetween('transactions.transaction_date', [$dateRange['start'], $dateRange['end']]);
         }
 
+        $incomeType = TransactionType::INCOME->value;
+        $expenseType = TransactionType::EXPENSE->value;
+
         $totals = $query->select(
-            DB::raw("COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income"),
-            DB::raw("COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense")
+            DB::raw("COALESCE(SUM(CASE WHEN transactions.type = '{$incomeType}' THEN transactions.amount ELSE 0 END), 0) as total_income"),
+            DB::raw("COALESCE(SUM(CASE WHEN transactions.type = '{$expenseType}' THEN transactions.amount ELSE 0 END), 0) as total_expense")
         )->first();
 
         $totalIncome = (float) $totals->total_income;
@@ -132,11 +125,6 @@ class TransactionService
         ];
     }
 
-    /**
-     * Get statistics by category for a period.
-     *
-     * @return array{incomeByCategory: array, expenseByCategory: array, totalIncome: float, totalExpense: float}
-     */
     public function getStatsByCategory(?User $user, string $period = 'summary_month', ?int $groupId = null): array
     {
         $query = $this->buildScopedQuery($user, $groupId);
@@ -146,18 +134,21 @@ class TransactionService
             $query->whereBetween('transactions.transaction_date', [$dateRange['start'], $dateRange['end']]);
         }
 
-        // Get income by category
-        $incomeByCategory = (clone $query)
-            ->where('transactions.type', TransactionType::INCOME)
+        // Single query for both income and expense
+        $statsData = (clone $query)
             ->join('categories', 'transactions.category_id', '=', 'categories.id')
             ->select(
+                'transactions.type',
                 'categories.name',
                 'categories.emoji',
                 DB::raw('SUM(transactions.amount) as total')
             )
-            ->groupBy('categories.id', 'categories.name', 'categories.emoji')
-            ->orderByDesc('total')
-            ->get()
+            ->groupBy('categories.id', 'transactions.type', 'categories.name', 'categories.emoji')
+            ->get();
+
+        $incomeByCategory = $statsData->filter(fn ($row) => $row->type === TransactionType::INCOME)
+            ->sortByDesc('total')
+            ->values()
             ->map(fn ($row) => [
                 'name' => $row->name,
                 'emoji' => $row->emoji,
@@ -165,18 +156,9 @@ class TransactionService
             ])
             ->toArray();
 
-        // Get expense by category
-        $expenseByCategory = (clone $query)
-            ->where('transactions.type', TransactionType::EXPENSE)
-            ->join('categories', 'transactions.category_id', '=', 'categories.id')
-            ->select(
-                'categories.name',
-                'categories.emoji',
-                DB::raw('SUM(transactions.amount) as total')
-            )
-            ->groupBy('categories.id', 'categories.name', 'categories.emoji')
-            ->orderByDesc('total')
-            ->get()
+        $expenseByCategory = $statsData->filter(fn ($row) => $row->type === TransactionType::EXPENSE)
+            ->sortByDesc('total')
+            ->values()
             ->map(fn ($row) => [
                 'name' => $row->name,
                 'emoji' => $row->emoji,
@@ -218,9 +200,12 @@ class TransactionService
         $query = $this->buildScopedQuery($user, $groupId)
             ->whereDate('transaction_date', today());
 
+        $incomeType = TransactionType::INCOME->value;
+        $expenseType = TransactionType::EXPENSE->value;
+
         $totals = $query->select(
-            DB::raw("COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income"),
-            DB::raw("COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense")
+            DB::raw("COALESCE(SUM(CASE WHEN transactions.type = '{$incomeType}' THEN transactions.amount ELSE 0 END), 0) as total_income"),
+            DB::raw("COALESCE(SUM(CASE WHEN transactions.type = '{$expenseType}' THEN transactions.amount ELSE 0 END), 0) as total_expense")
         )->first();
 
         return (float) $totals->total_income - (float) $totals->total_expense;
@@ -231,14 +216,19 @@ class TransactionService
      */
     public function update(Transaction $transaction, array $data): Transaction
     {
-        $transaction->update(array_filter([
-            'category_id' => $data['category_id'] ?? null,
-            'type' => $data['type'] ?? null,
-            'amount' => $data['amount'] ?? null,
-            'note' => array_key_exists('note', $data) ? $data['note'] : null,
+        $updateData = array_filter([
+            'category_id'      => $data['category_id'] ?? null,
+            'type'             => $data['type'] ?? null,
+            'amount'           => $data['amount'] ?? null,
             'transaction_date' => $data['transaction_date'] ?? null,
-        ], fn ($value) => $value !== null));
+        ], fn ($value) => $value !== null);
 
+        // Handle note separately — it must be settable to null (to clear it)
+        if (array_key_exists('note', $data)) {
+            $updateData['note'] = $data['note'];
+        }
+
+        $transaction->update($updateData);
         $transaction->load('category');
 
         return $transaction;
@@ -263,7 +253,7 @@ class TransactionService
 
         $dateRange = $this->getDateRange($period);
         if ($dateRange) {
-            $query->whereBetween('transaction_date', [$dateRange['start'], $dateRange['end']]);
+            $query->whereBetween('transactions.transaction_date', [$dateRange['start'], $dateRange['end']]);
         }
 
         return $query->delete();
@@ -306,7 +296,7 @@ class TransactionService
 
         return $query->orderBy('transaction_date', 'desc')
             ->orderBy('created_at', 'desc')
-            ->paginate($filters['per_page'] ?? 20);
+            ->paginate(min((int) ($filters['per_page'] ?? 20), 100));
     }
 
     /**
